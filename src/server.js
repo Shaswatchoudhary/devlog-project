@@ -1,49 +1,48 @@
 require('dotenv').config();
 const http = require('http');
-const fs = require('fs');
-const path = require('path');
+const mongoose = require('mongoose');
 
-const logs = [];
 const PORT = process.env.PORT || 3000;
+const MONGO_URL = process.env.MONGO_URL || 'mongodb://localhost:27017/devlog';
 
-const logFile = path.join(__dirname, "../logs/server.log");
+// MongoDB Log Schema
+const logSchema = new mongoose.Schema({
+  message: String,
+  timestamp: { type: Date, default: Date.now }
+});
+const Log = mongoose.model('Log', logSchema);
 
-// make sure logs folder exists
-const logDir = path.dirname(logFile);
-if (!fs.existsSync(logDir)) {
-  fs.mkdirSync(logDir, { recursive: true });
-}
+// Connect to MongoDB
+mongoose.connect(MONGO_URL)
+  .then(() => console.log('Connected to MongoDB'))
+  .catch(err => console.error('MongoDB error:', err));
 
-function writeLog(message) {
-  fs.appendFileSync(logFile, message + '\n');
-}
-
-function getLogs() {
-  return { total: logs.length, logs };
-}
-
-function addLog(message) {
-  const entry = {
-    id: logs.length + 1,
-    message,
-    timestamp: new Date().toISOString()
-  };
-
-  logs.push(entry);
-  writeLog(`${entry.id} | ${entry.message} | ${entry.timestamp}`);
-  return entry;
-}
-
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   res.setHeader('Content-Type', 'application/json');
 
   console.log(`${req.method} ${req.url}`);
 
   if (req.method === 'GET' && req.url === '/logs') {
-    res.end(JSON.stringify(getLogs()));
+    try {
+      const logs = await Log.find().sort({ timestamp: -1 });
+      res.end(JSON.stringify({ total: logs.length, logs }));
+    } catch (err) {
+      console.error('GET /logs error:', err);
+      res.statusCode = 500;
+      res.end(JSON.stringify({ error: 'Failed to fetch logs' }));
+    }
+
   } else if (req.method === 'POST' && req.url === '/log') {
-    addLog('New entry at ' + new Date().toISOString());
-    res.end(JSON.stringify({ message: 'Log added' }));
+    try {
+      const log = new Log({ message: 'Entry at ' + new Date().toISOString() });
+      await log.save();
+      res.end(JSON.stringify({ message: 'Log saved to MongoDB' }));
+    } catch (err) {
+      console.error('POST /log error:', err);
+      res.statusCode = 500;
+      res.end(JSON.stringify({ error: 'Failed to save log' }));
+    }
+
   } else {
     res.statusCode = 404;
     res.end(JSON.stringify({ error: 'Not found' }));
@@ -51,5 +50,5 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`DevLog server running on port ${PORT}`);
+  console.log(`DevLog running on port ${PORT}`);
 });
